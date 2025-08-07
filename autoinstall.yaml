@@ -58,6 +58,19 @@ autoinstall:
     - tigervnc-standalone-server
     - tigervnc-common
     - expect
+  - hwloc
+  - lm-sensors
+  - sysstat
+  - smartmontools
+  - net-tools
+  - zbar-tools
+  - qtqr
+  - cups
+  - printer-drivers-all
+  - sane
+  - sane-utils
+  - build-essential
+  
 
   late-commands:
     # Настройка FTP
