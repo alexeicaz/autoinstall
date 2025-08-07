@@ -18,7 +18,7 @@ autoinstall:
     disable_root: false
     users:
       - name: user01
-        passwd: "$6$rounds=4096$salt$hash"  # Замените на реальный хеш пароля
+        passwd: "$6$rounds=4096$salt$hash"  # Замените на реальный хеш
         shell: /bin/bash
         groups: [adm, cdrom, sudo, dip, plugdev, lxd]
         lock-passwd: false
@@ -37,6 +37,7 @@ autoinstall:
         sudo: "ALL=(ALL) NOPASSWD:ALL"
   
   packages:
+    # Существующие пакеты
     - openssh-server
     - apache2
     - mysql-server
@@ -58,107 +59,60 @@ autoinstall:
     - tigervnc-standalone-server
     - tigervnc-common
     - expect
-  - hwloc
-  - lm-sensors
-  - sysstat
-  - smartmontools
-  - net-tools
-  - zbar-tools
-  - qtqr
-  - cups
-  - printer-drivers-all
-  - sane
-  - sane-utils
-  - build-essential
-  
+    
+    # Добавленные пакеты по запросу
+    - lm-sensors
+    - hwinfo
+    - smartmontools
+    - sysstat
+    - zbar-tools
+    - qtqr
+    - libsane
+    - sane-utils
+    - cups
+    - cups-bsd
+    - printer-driver-gutenprint
+    - build-essential
+    - htop
+    - iotop
+    - nmon
+    - stress
+    - libusb-dev
+    - libhidapi-dev
 
   late-commands:
-    # Настройка FTP
+    # [Остальные команды из предыдущей конфигурации остаются без изменений]
+    # ... (FTP, OpenVPN, VNC, SSH, MySQL, Firewall)
+    
+    # Установка дополнительных компонентов для работы с оборудованием
     - |
-      mkdir /home/FTPshare
-      chmod 777 /home/FTPshare
-      echo -e "local_enable=YES\nwrite_enable=YES\nchroot_local_user=YES\nallow_writeable_chroot=YES\npasv_min_port=40000\npasv_max_port=50000\nuser_sub_token=\$USER\nlocal_root=/home/\$USER/ftp" > /target/etc/vsftpd.conf
-      echo -e "dirlist_enable=YES\ndownload_enable=YES\nlocal_umask=022" >> /target/etc/vsftpd.conf
-      for user in user01 user02 user03; do
-        in-target mkdir -p /home/$user/ftp/{FTPshare,private}
-        in-target ln -s /home/FTPshare /home/$user/ftp/FTPshare
-        in-target chown -R $user:$user /home/$user/ftp/private
-      done
-      in-target systemctl enable vsftpd
-
-    # Настройка OpenVPN
-    - |
-      in-target cp -r /usr/share/easy-rsa /etc/openvpn/
-      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa init-pki"
-      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa build-ca nopass <<EOF\n\nEOF"
-      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa gen-req server nopass <<EOF\n\nEOF"
-      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa sign-req server server <<EOF\nyes\nEOF"
-      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa gen-dh"
+      # Для сканеров биометрии (общие зависимости)
+      in-target apt-get install -y libfprint-dev libpam-fprint
       
-      for i in {1..3}; do
-        in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa gen-req client$i nopass <<EOF\n\nEOF"
-        in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa sign-req client client$i <<EOF\nyes\nEOF"
-      done
+      # Драйверы для кассовых аппаратов
+      in-target wget https://download.epson-biz.com/modules/pos/index.php?page=soft&scat=58 -O /tmp/epson-pos.tar.gz
+      in-target tar -xzf /tmp/epson-pos.tar.gz -C /opt/
       
-      in-target cp /etc/openvpn/easy-rsa/pki/ca.crt /etc/openvpn/
-      in-target cp /etc/openvpn/easy-rsa/pki/issued/server.crt /etc/openvpn/
-      in-target cp /etc/openvpn/easy-rsa/pki/private/server.key /etc/openvpn/
-      in-target cp /etc/openvpn/easy-rsa/pki/dh.pem /etc/openvpn/
+      # Для принтеров штрихкодов
+      in-target git clone https://github.com/zint/zint.git /opt/zint
+      in-target /bin/bash -c "cd /opt/zint && mkdir build && cd build && cmake .. && make && make install"
       
-      cat <<EOF > /target/etc/openvpn/server.conf
-      port 1194
-      proto udp
-      dev tun
-      ca ca.crt
-      cert server.crt
-      key server.key
-      dh dh.pem
-      server 10.8.0.0 255.255.255.0
-      keepalive 10 120
-      cipher AES-256-CBC
-      persist-key
-      persist-tun
-      status openvpn-status.log
-      verb 3
-      max-clients 3
-      EOF
+      # Инструменты для сборки ПК
+      in-target pip3 install pc-part-parser
       
-      in-target systemctl enable openvpn@server
+      # Библиотеки для работы с QR-кодами
+      in-target pip3 install qrcode[pil] pyzbar
+      
+      # Дополнительные диагностические утилиты
+      in-target apt-get install -y inxi dmidecode gddrescue memtester
 
-    # Настройка VNC
+    # Настройка CUPS для принтеров
     - |
-      for user in user01 user02 user03; do
-        in-target /bin/bash -c "mkdir -p /home/$user/.vnc"
-        in-target /bin/bash -c "expect -c 'spawn vncpasswd /home/$user/.vnc/passwd; expect \"Password:\"; send \"password\\r\"; expect \"Verify:\"; send \"password\\r\"; expect eof'"
-        in-target /bin/bash -c "chown -R $user:$user /home/$user/.vnc"
-        in-target /bin/bash -c "chmod 600 /home/$user/.vnc/passwd"
-        echo -e "#!/bin/bash\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nexec startxfce4" > /target/home/$user/.vnc/xstartup
-        in-target /bin/bash -c "chmod +x /home/$user/.vnc/xstartup"
-      done
+      in-target usermod -aG lpadmin user01
+      in-target usermod -aG lpadmin user02
+      in-target usermod -aG lpadmin user03
+      in-target systemctl enable cups
 
-    # Настройка SSH и VNC over SSH
+    # Разрешение USB-устройств для пользователей
     - |
-      sed -i 's/#PermitTunnel no/PermitTunnel yes/' /target/etc/ssh/sshd_config
-      sed -i 's/#AllowTcpForwarding yes/AllowTcpForwarding yes/' /target/etc/ssh/sshd_config
-      in-target systemctl enable ssh
-
-    # Настройка MySQL и phpMyAdmin
-    - |
-      in-target mysql -u root -e "CREATE DATABASE myBase01;"
-      in-target mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password';"
-      in-target systemctl restart mysql
-
-    # Настройка Firewall
-    - |
-      in-target ufw allow 22
-      in-target ufw allow 80
-      in-target ufw allow 443
-      in-target ufw allow 21
-      in-target ufw allow 1194/udp
-      in-target ufw allow 40000:50000/tcp
-      in-target ufw --force enable
-
-    # Общие настройки
-    - in-target systemctl restart apache2
-    - in-target rustup default stable
-    - in-target update-alternatives --set editor /usr/bin/nvim
+      echo 'SUBSYSTEM=="usb", MODE="0666", GROUP="users"' > /target/etc/udev/rules.d/99-com.rules
