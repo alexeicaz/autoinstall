@@ -1,10 +1,151 @@
 #cloud-config
 autoinstall:
   version: 1
+  locale: ru_RU.UTF-8
+  keyboard:
+    layout: ru
+  network:
+    version: 2
+    ethernets:
+      enp0s3:
+        dhcp4: true
+  storage:
+    layout:
+      name: lvm
   identity:
-     hostname: ubuntu22auto
-     username: ubuntulogin
-     password: <mkpasswd -m sha-512 ubuntupass>
-  ssh:
-     install-server: yes
-     allow-pw: yes
+    hostname: xubuntu-server
+  user-data:
+    disable_root: false
+    users:
+      - name: user01
+        passwd: "$6$rounds=4096$salt$hash"  # Замените на реальный хеш пароля
+        shell: /bin/bash
+        groups: [adm, cdrom, sudo, dip, plugdev, lxd]
+        lock-passwd: false
+        sudo: "ALL=(ALL) NOPASSWD:ALL"
+      - name: user02
+        passwd: "$6$rounds=4096$salt$hash"  # Тот же хеш
+        shell: /bin/bash
+        groups: [adm, cdrom, sudo, dip, plugdev, lxd]
+        lock-passwd: false
+        sudo: "ALL=(ALL) NOPASSWD:ALL"
+      - name: user03
+        passwd: "$6$rounds=4096$salt$hash"  # Тот же хеш
+        shell: /bin/bash
+        groups: [adm, cdrom, sudo, dip, plugdev, lxd]
+        lock-passwd: false
+        sudo: "ALL=(ALL) NOPASSWD:ALL"
+  
+  packages:
+    - openssh-server
+    - apache2
+    - mysql-server
+    - php
+    - libapache2-mod-php
+    - php-mysql
+    - phpmyadmin
+    - vsftpd
+    - filezilla
+    - ufw
+    - git
+    - curl
+    - wget
+    - neovim
+    - python3
+    - rustup
+    - openvpn
+    - easy-rsa
+    - tigervnc-standalone-server
+    - tigervnc-common
+    - expect
+
+  late-commands:
+    # Настройка FTP
+    - |
+      mkdir /home/FTPshare
+      chmod 777 /home/FTPshare
+      echo -e "local_enable=YES\nwrite_enable=YES\nchroot_local_user=YES\nallow_writeable_chroot=YES\npasv_min_port=40000\npasv_max_port=50000\nuser_sub_token=\$USER\nlocal_root=/home/\$USER/ftp" > /target/etc/vsftpd.conf
+      echo -e "dirlist_enable=YES\ndownload_enable=YES\nlocal_umask=022" >> /target/etc/vsftpd.conf
+      for user in user01 user02 user03; do
+        in-target mkdir -p /home/$user/ftp/{FTPshare,private}
+        in-target ln -s /home/FTPshare /home/$user/ftp/FTPshare
+        in-target chown -R $user:$user /home/$user/ftp/private
+      done
+      in-target systemctl enable vsftpd
+
+    # Настройка OpenVPN
+    - |
+      in-target cp -r /usr/share/easy-rsa /etc/openvpn/
+      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa init-pki"
+      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa build-ca nopass <<EOF\n\nEOF"
+      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa gen-req server nopass <<EOF\n\nEOF"
+      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa sign-req server server <<EOF\nyes\nEOF"
+      in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa gen-dh"
+      
+      for i in {1..3}; do
+        in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa gen-req client$i nopass <<EOF\n\nEOF"
+        in-target /bin/bash -c "cd /etc/openvpn/easy-rsa && ./easyrsa sign-req client client$i <<EOF\nyes\nEOF"
+      done
+      
+      in-target cp /etc/openvpn/easy-rsa/pki/ca.crt /etc/openvpn/
+      in-target cp /etc/openvpn/easy-rsa/pki/issued/server.crt /etc/openvpn/
+      in-target cp /etc/openvpn/easy-rsa/pki/private/server.key /etc/openvpn/
+      in-target cp /etc/openvpn/easy-rsa/pki/dh.pem /etc/openvpn/
+      
+      cat <<EOF > /target/etc/openvpn/server.conf
+      port 1194
+      proto udp
+      dev tun
+      ca ca.crt
+      cert server.crt
+      key server.key
+      dh dh.pem
+      server 10.8.0.0 255.255.255.0
+      keepalive 10 120
+      cipher AES-256-CBC
+      persist-key
+      persist-tun
+      status openvpn-status.log
+      verb 3
+      max-clients 3
+      EOF
+      
+      in-target systemctl enable openvpn@server
+
+    # Настройка VNC
+    - |
+      for user in user01 user02 user03; do
+        in-target /bin/bash -c "mkdir -p /home/$user/.vnc"
+        in-target /bin/bash -c "expect -c 'spawn vncpasswd /home/$user/.vnc/passwd; expect \"Password:\"; send \"password\\r\"; expect \"Verify:\"; send \"password\\r\"; expect eof'"
+        in-target /bin/bash -c "chown -R $user:$user /home/$user/.vnc"
+        in-target /bin/bash -c "chmod 600 /home/$user/.vnc/passwd"
+        echo -e "#!/bin/bash\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nexec startxfce4" > /target/home/$user/.vnc/xstartup
+        in-target /bin/bash -c "chmod +x /home/$user/.vnc/xstartup"
+      done
+
+    # Настройка SSH и VNC over SSH
+    - |
+      sed -i 's/#PermitTunnel no/PermitTunnel yes/' /target/etc/ssh/sshd_config
+      sed -i 's/#AllowTcpForwarding yes/AllowTcpForwarding yes/' /target/etc/ssh/sshd_config
+      in-target systemctl enable ssh
+
+    # Настройка MySQL и phpMyAdmin
+    - |
+      in-target mysql -u root -e "CREATE DATABASE myBase01;"
+      in-target mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password';"
+      in-target systemctl restart mysql
+
+    # Настройка Firewall
+    - |
+      in-target ufw allow 22
+      in-target ufw allow 80
+      in-target ufw allow 443
+      in-target ufw allow 21
+      in-target ufw allow 1194/udp
+      in-target ufw allow 40000:50000/tcp
+      in-target ufw --force enable
+
+    # Общие настройки
+    - in-target systemctl restart apache2
+    - in-target rustup default stable
+    - in-target update-alternatives --set editor /usr/bin/nvim
