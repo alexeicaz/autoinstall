@@ -1,29 +1,10 @@
 #cloud-config
 autoinstall:
   version: 1
-  locale: en_US
-  keyboard:
-    layout: "us,ru"
-    toggle: alt_shift_toggle
-  disk:
-    target: /dev/sda
-    wipe: auto
-    partitions:
-      - number: 1
-        size: 20GB
-        format: ext4
-        filesystem: ext4
-        mount: /
-      - number: 2
-        size: 8GB
-        format: swap
-        filesystem: swap
-  user-data:
-    install_desktop: xubuntu-desktop-minimal
-    packages:
-      - git
-      - php
-      - perl
-      - mysql-server
-      - mysql-client
-      - apache2
+  identity:
+     hostname: ubuntu22auto
+     username: ubuntulogin
+     password: <mkpasswd -m sha-512 ubuntupass>
+  ssh:
+     install-server: yes
+     allow-pw: yes
